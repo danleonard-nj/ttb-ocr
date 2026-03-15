@@ -1,0 +1,10 @@
+# Dataset (images are large binaries)
+dataset/images/
+!dataset/sample_labels/
+
+# Generated outputs
+results/
+output.txt
+
+# Archives
+*.zip

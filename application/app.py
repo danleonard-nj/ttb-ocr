@@ -41,11 +41,8 @@ def _warm_tesseract() -> None:
 
 @app.before_serving
 async def warmup_ocr_engines() -> None:
-    try:
-        await asyncio.to_thread(_warm_tesseract)
-    except Exception:
-        # Warmup should not block app startup; OCR requests can still initialize lazily.
-        log.exception("Tesseract warmup failed")
+    """Kick off warmup in background so the server is immediately live."""
+    asyncio.get_event_loop().run_in_executor(None, _warm_tesseract)
 
 
 def _translate_field(field: dict) -> dict:

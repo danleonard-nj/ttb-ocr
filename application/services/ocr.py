@@ -1,5 +1,4 @@
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Literal, Optional
 
 from .engines import BaseOcrEngine, PaddleOcrEngine, TesseractEngine
@@ -178,31 +177,23 @@ class OcrService:
             require_government_warning=require_government_warning,
         )
 
-        # Fallbacks (engine defines its own specs + parallelism)
+        # Fallbacks — run one at a time and stop as soon as all fields are found
         if run_fallbacks and self._should_fallback(evaluation):
-            fallback_specs = eng.fallback_specs
+            for spec in eng.fallback_specs:
+                attempts.append(self._run_attempt(eng, img, **spec))
 
-            if eng.supports_parallel and fallback_specs:
-                with ThreadPoolExecutor(max_workers=min(4, len(fallback_specs))) as ex:
-                    futures = [
-                        ex.submit(self._run_attempt, eng, img, **spec)
-                        for spec in fallback_specs
-                    ]
-                    for fut in as_completed(futures):
-                        attempts.append(fut.result())
-            else:
-                for spec in fallback_specs:
-                    attempts.append(self._run_attempt(eng, img, **spec))
+                combined_text = self._merge_attempts(attempts)
+                evaluation = self.matcher.evaluate_text(
+                    raw_ocr_text=combined_text,
+                    ttb_id=ttb_id,
+                    brand_name=brand_name,
+                    alcohol_content=alcohol_content,
+                    net_contents=net_contents,
+                    require_government_warning=require_government_warning,
+                )
 
-            combined_text = self._merge_attempts(attempts)
-            evaluation = self.matcher.evaluate_text(
-                raw_ocr_text=combined_text,
-                ttb_id=ttb_id,
-                brand_name=brand_name,
-                alcohol_content=alcohol_content,
-                net_contents=net_contents,
-                require_government_warning=require_government_warning,
-            )
+                if not self._should_fallback(evaluation):
+                    break
 
         evaluation["ocr_by_angle"] = self._build_ocr_by_angle(attempts)
         evaluation["ocr_attempts"] = attempts
