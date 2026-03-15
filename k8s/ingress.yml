@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: treasury-assignment-ingress
+  namespace: worktracker
+  annotations:
+    cert-manager.io/issuer: letsencrypt-prod
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: treasury-assignment.dan-leonard.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: treasury-assignment
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - treasury-assignment.dan-leonard.com
+    secretName: tls-secret-treasury-ocr

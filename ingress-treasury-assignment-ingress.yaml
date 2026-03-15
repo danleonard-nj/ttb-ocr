@@ -1,0 +1,30 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    cert-manager.io/issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  creationTimestamp: "2026-03-15T15:51:24Z"
+  generation: 1
+  name: treasury-assignment-ingress
+  namespace: worktracker
+  resourceVersion: "702403198"
+  uid: 1d22f3fc-5ef4-47d6-80c0-0d759940fa98
+spec:
+  rules:
+  - host: treasury-assignment.dan-leonard.com
+    http:
+      paths:
+      - backend:
+          service:
+            name: treasury-assignment
+            port:
+              number: 80
+        path: /
+        pathType: Prefix
+  tls:
+  - hosts:
+    - treasury-assignment.dan-leonard.com
+    secretName: tls-secret-treasury-ocr
+status:
+  loadBalancer: {}

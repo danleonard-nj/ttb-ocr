@@ -164,7 +164,7 @@ class OcrService:
 
         # First pass: full image, 0° rotation
         first = self._run_attempt(
-            eng, img, angle=0, preprocess_mode="basic", region="full", psm=11,
+            eng, img, angle=0, preprocess_mode="basic", region="full", psm=6,
         )
         attempts.append(first)
 

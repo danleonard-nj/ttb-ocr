@@ -3,6 +3,10 @@ import pytesseract
 
 from .base import BaseOcrEngine
 
+# Cap the longest edge: downscale huge scans, upscale tiny crops
+_MAX_DIM = 1500
+_MIN_DIM = 600
+
 
 class TesseractEngine(BaseOcrEngine):
 
@@ -14,7 +18,16 @@ class TesseractEngine(BaseOcrEngine):
     @staticmethod
     def _preprocess(img, mode: str = "basic"):
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        gray = cv2.resize(gray, None, fx=1.75, fy=1.75, interpolation=cv2.INTER_CUBIC)
+
+        # Adaptive scaling: shrink large images, grow tiny ones
+        h, w = gray.shape[:2]
+        longest = max(h, w)
+        if longest > _MAX_DIM:
+            scale = _MAX_DIM / longest
+            gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        elif longest < _MIN_DIM:
+            scale = _MIN_DIM / longest
+            gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
 
         if mode == "basic":
             return gray
@@ -33,13 +46,14 @@ class TesseractEngine(BaseOcrEngine):
             )
         raise ValueError(f"Unsupported preprocess mode: {mode}")
 
-    def ocr(self, img, *, preprocess_mode: str = "basic", psm: int = 11, **kwargs) -> dict:
+    def ocr(self, img, *, preprocess_mode: str = "basic", psm: int = 6, **kwargs) -> dict:
         if img is None:
             return {"text": "", "boxes": []}
 
         gray = self._preprocess(img, mode=preprocess_mode)
-        scale = 1.75
-        config = f"--oem 3 --psm {psm}"
+        # Compute actual scale factor between preprocessed and original image
+        scale = gray.shape[1] / img.shape[1]
+        config = f"--oem 3 --psm {psm} -c load_system_dawg=0 -c load_freq_dawg=0"
 
         data = pytesseract.image_to_data(gray, config=config, output_type=pytesseract.Output.DICT)
 
@@ -90,13 +104,13 @@ class TesseractEngine(BaseOcrEngine):
     @property
     def fallback_specs(self) -> list[dict]:
         return [
-            {"angle": 90, "preprocess_mode": "basic", "region": "full", "psm": 11},
-            {"angle": 270, "preprocess_mode": "basic", "region": "full", "psm": 11},
-            {"angle": 0, "preprocess_mode": "bilateral", "region": "full", "psm": 11},
-            {"angle": 90, "preprocess_mode": "basic", "region": "right_strip", "psm": 11},
-            {"angle": 270, "preprocess_mode": "basic", "region": "right_strip", "psm": 11},
-            {"angle": 0, "preprocess_mode": "basic", "region": "bottom_strip", "psm": 11},
-            {"angle": 0, "preprocess_mode": "adaptive", "region": "bottom_strip", "psm": 11},
+            {"angle": 90, "preprocess_mode": "basic", "region": "full", "psm": 6},
+            {"angle": 270, "preprocess_mode": "basic", "region": "full", "psm": 6},
+            {"angle": 0, "preprocess_mode": "bilateral", "region": "full", "psm": 6},
+            {"angle": 90, "preprocess_mode": "basic", "region": "right_strip", "psm": 6},
+            {"angle": 270, "preprocess_mode": "basic", "region": "right_strip", "psm": 6},
+            {"angle": 0, "preprocess_mode": "basic", "region": "bottom_strip", "psm": 6},
+            {"angle": 0, "preprocess_mode": "adaptive", "region": "bottom_strip", "psm": 6},
         ]
 
     @property
