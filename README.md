@@ -113,7 +113,7 @@ The normalization layer standardizes measurement and unit formats common on alco
 | Deployment      | URL                                                                                 | Infrastructure                          |
 | --------------- | ----------------------------------------------------------------------------------- | --------------------------------------- |
 | **AKS**         | [treasury-assignment.dan-leonard.com](https://treasury-assignment.dan-leonard.com/) | Azure Kubernetes Service via Helm       |
-| **App Service** | [treasury-test-app.azurewebsites.net](https://treasury-test-app.azurewebsites.net/) | Azure App Service B1 via GitHub Actions |
+| **App Service** | [treasury-app.azurewebsites.net](https://treasury-app.azurewebsites.net/)           | Azure App Service B1 via GitHub Actions |
 
 Both deployments run the same Docker image from ACR. Two deployment paths are included to demonstrate both a CI/CD pipeline (GitHub Actions → App Service) and infrastructure-as-code (Helm chart → AKS).
 
