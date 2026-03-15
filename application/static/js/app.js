@@ -529,11 +529,14 @@
               '<div class="mt-1"><strong>Matched Groups:</strong></div><ul class="mb-1">';
             Object.keys(gwd.matched_groups).forEach(function (g) {
               var mg = gwd.matched_groups[g];
+              var label = mg.hits
+                ? mg.hits.join(', ')
+                : mg.best_phrase || '';
               debugHtml +=
                 '<li>' +
                 escapeHtml(g) +
                 ': "' +
-                escapeHtml(mg.best_phrase || '') +
+                escapeHtml(label) +
                 '" (score: ' +
                 (mg.score || 0) +
                 ')</li>';

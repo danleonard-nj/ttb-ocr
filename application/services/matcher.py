@@ -3,30 +3,15 @@ from typing import Optional
 
 
 class LabelMatcher:
-    GOV_WARNING_ANCHORS = [
-        "government warning",
-        "surgeon general",
-        "women should not drink alcoholic beverages during pregnancy",
-        "consumption of alcoholic beverages impairs your ability to drive a car or operate machinery",
-        "may cause health problems",
-    ]
-
-    GOV_WARNING_REQUIRED_GROUPS = {
-        "header": [
-            "government warning",
-        ],
-        "authority": [
-            "surgeon general",
-        ],
-        "pregnancy": [
-            "women should not drink alcoholic beverages during pregnancy",
-            "during pregnancy",
-        ],
-        "impairment": [
-            "impairs your ability to drive a car or operate machinery",
-            "operate machinery",
-            "drive a car or operate machinery",
-        ],
+    # Signal keywords for government warning detection.
+    # Each group contains short substrings likely to survive OCR noise.
+    # Matching is done via simple substring search on normalized text.
+    GOV_WARNING_SIGNALS = {
+        "header":     ["government", "warning", "govern", "warn"],
+        "authority":  ["surgeon", "general"],
+        "pregnancy":  ["pregnan", "women", "birth", "drink"],
+        "impairment": ["impair", "machinery", "operat", "drive"],
+        "health":     ["health", "problem"],
     }
 
     @staticmethod
@@ -37,17 +22,6 @@ class LabelMatcher:
         s = s.lower()
 
         replacements = {
-            "waming": "warning",
-            "govemment": "government",
-            "surgcon": "surgeon",
-            "genera!": "general",
-            "pregnaney": "pregnancy",
-            "bevarages": "beverages",
-            "machincry": "machinery",
-            "750mi": "750ml",
-            "50mi": "50ml",
-            "11 5%": "11.5%",
-            "11,5%": "11.5%",
             "fl. oz": "fl oz",
             "fl oz.": "fl oz",
             "fluid ounces": "fl oz",
@@ -57,8 +31,6 @@ class LabelMatcher:
             "alc /vol": "alc/vol",
             "alc / vol": "alc/vol",
             "by vol.": "by vol",
-            "acar": "a car",
-            "bev- erages": "beverages",
         }
         for bad, good in replacements.items():
             s = s.replace(bad, good)
@@ -307,53 +279,33 @@ class LabelMatcher:
             }
 
         matched_groups = {}
-        matched_anchor_phrases = []
 
-        for group_name, phrases in cls.GOV_WARNING_REQUIRED_GROUPS.items():
-            best = 0.0
-            best_phrase = None
-
-            for phrase in phrases:
-                if phrase in normalized_ocr_text:
-                    best = 1.0
-                    best_phrase = phrase
-                    break
-
-                score = cls.token_overlap_score(phrase, normalized_ocr_text)
-                if score > best:
-                    best = score
-                    best_phrase = phrase
-
+        for group_name, keywords in cls.GOV_WARNING_SIGNALS.items():
+            hits = [kw for kw in keywords if kw in normalized_ocr_text]
             matched_groups[group_name] = {
-                "best_phrase": best_phrase,
-                "score": round(best, 3),
+                "hits": hits,
+                "score": round(len(hits) / len(keywords), 3) if keywords else 0.0,
             }
 
-        for anchor in cls.GOV_WARNING_ANCHORS:
-            if anchor in normalized_ocr_text or cls.token_overlap_score(anchor, normalized_ocr_text) >= 0.6:
-                matched_anchor_phrases.append(anchor)
+        groups_hit = sum(1 for v in matched_groups.values() if v["hits"])
+        total = len(cls.GOV_WARNING_SIGNALS)
+        confidence = round(groups_hit / total, 3) if total else 0.0
 
-        group_scores = [v["score"] for v in matched_groups.values()]
-        avg_score = sum(group_scores) / len(group_scores) if group_scores else 0.0
-
-        strong_groups = sum(1 for s in group_scores if s >= 0.75)
-        partial_groups = sum(1 for s in group_scores if s >= 0.5)
-
-        if strong_groups >= 3 or (strong_groups >= 2 and len(matched_anchor_phrases) >= 2):
+        if groups_hit >= 3:
             status = "found"
-            confidence = max(0.85, round(avg_score, 3))
-        elif partial_groups >= 2:
+        elif groups_hit >= 2:
             status = "partial"
-            confidence = round(avg_score, 3)
         else:
             status = "missing"
-            confidence = round(avg_score, 3)
+
+        # Flatten all hits for the anchors list (backward-compat)
+        matched_anchors = [kw for v in matched_groups.values() for kw in v["hits"]]
 
         return {
             "status": status,
             "confidence": confidence,
             "matched_groups": matched_groups,
-            "matched_anchors": matched_anchor_phrases,
+            "matched_anchors": matched_anchors,
         }
 
     @classmethod
