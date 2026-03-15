@@ -11,6 +11,8 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    libgl1 \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
@@ -20,8 +22,8 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 # Copy application code
 COPY . .
 
-# Expose port (default Quart port)
-EXPOSE 8000
+# Expose port
+EXPOSE 80
 
 # Set entrypoint to run Quart app
-CMD ["hypercorn", "app:app", "--bind", "0.0.0.0:8000"]
+CMD ["hypercorn", "app:app", "--bind", "0.0.0.0:80"]
