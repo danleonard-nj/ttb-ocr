@@ -5,7 +5,7 @@ Automated OCR pipeline for verifying U.S. alcohol beverage labels against [TTB (
 ## Architecture
 
 ```
-treasury-takehome/
+ttb-ocr/
 ├── application/              # Web service (Quart + Bootstrap)
 │   ├── app.py                # Async API server
 │   ├── Dockerfile
@@ -33,7 +33,6 @@ treasury-takehome/
 ├── dataset/                  # Ground truth CSVs + label images
 │   └── sample_labels/        # Curated subset for quick demo runs
 │
-├── results/                  # Benchmark output (gitignored)
 ├── requirements.txt
 ├── V2_ROADMAP.md
 └── README.md
@@ -54,7 +53,7 @@ The "AI" in this system is the OCR itself. Everything downstream is a rules engi
 - **5-second target** — Local OCR with deterministic matching runs in ~5 seconds per label. No network round-trips to cloud ML endpoints, no firewall issues.
 - **No external API dependencies** — Runs entirely self-contained in a Docker container. No API keys, no outbound network required.
 - **Explainable results** — Every match decision traces back to a regex pattern or token overlap score. Agents can see _why_ a field matched or didn't.
-- **Batch support** — Multi-image upload processes labels concurrently.
+- **Multi-image upload** — Agents can upload multiple label images for a single verification request, supporting workflows where a label spans multiple photos (front, back, neck) or where the same application data needs to be checked against several image captures.
 
 ### OCR Pipeline
 
@@ -76,16 +75,38 @@ Tesseract is the default engine. PaddleOCR is accessible via the debug toggle in
 
 ### Field Matching
 
-| Field                  | Method                                | Match Logic                                                                                                                     |
-| ---------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **Brand name**         | Token overlap scoring                 | ≥80% overlap = partial match, exact = full match. Case-insensitive. Handles Dave's `STONE'S THROW` vs `Stone's Throw` scenario. |
-| **Alcohol content**    | Regex extraction of `N%` patterns     | Float comparison with 0.01 tolerance                                                                                            |
-| **Net contents**       | Regex extraction + unit normalization | Normalizes ml/mL/ML, l/L, oz/fl. oz. variants                                                                                   |
-| **Government warning** | Multi-group pattern matching          | Checks 4 required segments: header, surgeon general authority, pregnancy clause, impairment clause                              |
+| Field                  | Method                                | Match Logic                                                                                                     |
+| ---------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **Brand name**         | Token overlap scoring                 | ≥80% overlap = partial match, exact = full match. Case-insensitive. Short brand guard prevents false positives. |
+| **Alcohol content**    | Regex extraction of `N%` patterns     | Float comparison with 0.01 tolerance. Recognizes `alc/vol`, `alc by vol`, `abv`, and similar variants.          |
+| **Net contents**       | Regex extraction + unit normalization | Normalizes ml/mL/ML, l/L, cl, oz/fl oz variants.                                                                |
+| **Government warning** | Keyword signal matching               | Checks 5 signal groups via OCR-tolerant substring search. See details below.                                    |
+
+### Government Warning Detection
+
+Government warnings on U.S. alcohol labels follow a standardized format, but OCR frequently garbles individual characters. Rather than requiring exact phrase matches or maintaining a dictionary of OCR typos, the system uses **keyword signal matching** — checking for short keyword fragments that are likely to survive OCR noise.
+
+Five signal groups are checked against the normalized OCR text:
+
+| Group          | Keywords                                  |
+| -------------- | ----------------------------------------- |
+| **Header**     | `government`, `warning`, `govern`, `warn` |
+| **Authority**  | `surgeon`, `general`                      |
+| **Pregnancy**  | `pregnan`, `women`, `birth`, `drink`      |
+| **Impairment** | `impair`, `machinery`, `operat`, `drive`  |
+| **Health**     | `health`, `problem`                       |
+
+The detection counts how many groups have at least one keyword hit:
+
+- **3+ groups** → `found` — high confidence the warning is present
+- **2 groups** → `partial` — some warning language detected
+- **0–1 groups** → `missing` — insufficient evidence
+
+This approach is deliberately forgiving: a garbled "govemment waming" still contains "govern" and "warn", so the header group matches without needing hardcoded typo corrections.
 
 ### Text Normalization
 
-Built-in correction for common OCR misreads: `waming→warning`, `govemment→government`, `750mi→750ml`, `11 5%→11.5%`, etc. These were identified empirically during benchmark evaluation against the test dataset.
+The normalization layer standardizes measurement and unit formats common on alcohol labels (`fl. oz` → `fl oz`, `alc / vol` → `alc/vol`, `fluid ounces` → `fl oz`) without attempting to correct general OCR misreads. Field-specific matching logic (regex patterns, substring signals) is designed to tolerate OCR noise directly rather than relying on a brittle dictionary of corrections.
 
 ## Live Demos
 
@@ -170,14 +191,14 @@ Sample size is small — these numbers demonstrate the pipeline works, not produ
 
 ## Web UI
 
-- Drag-and-drop multi-image upload with batch support
+- Drag-and-drop multi-image upload
 - Per-field confidence scores with color-coded status badges (green/yellow/red)
 - Bounding box overlays on annotated images showing where each field was detected
 - Debug mode with raw OCR text, attempt logs, government warning detail, and alternate engine selector (PaddleOCR)
 
 ## CI/CD
 
-GitHub Actions builds and pushes the Docker image to Azure Container Registry on merge to main, then deploys to App Service. The AKS deployment uses the same image from ACR, deployed separately via Helm.
+GitHub Actions builds and pushes the Docker image to Azure Container Registry on merge to `main` (triggered by changes to `application/` or the workflow file), then deploys to App Service. The AKS deployment uses the same image from ACR, deployed separately via Helm.
 
 ## Tools Used
 
@@ -196,9 +217,9 @@ GitHub Actions builds and pushes the Docker image to Azure Container Registry on
 - **No authentication** — Out of scope for the prototype. A production deployment would require integration with the agency's identity provider.
 - **No persistent storage** — Labels are processed in-memory and not retained. This sidesteps document retention and PII concerns for the prototype phase.
 - **OCR quality depends on image quality** — Degraded images (extreme angles, heavy glare, very low resolution) will produce lower confidence results. The system surfaces this honestly via confidence scores rather than guessing.
-- **Government warning detection is presence-based** — The system checks that the required warning segments are present in the OCR text. It does not currently verify exact formatting (bold, all-caps for "GOVERNMENT WARNING:") since OCR doesn't preserve typographic attributes. Noted as a V2 enhancement.
+- **Government warning detection is signal-based** — The system checks for keyword fragments across five warning concept groups rather than requiring exact phrase matches. This is intentionally forgiving to reduce false negatives from OCR noise, at the cost of slightly higher false positive risk on non-warning text that happens to contain warning-related words. For the POC, biasing toward "found" is the right trade-off.
 - **Benchmark dataset is small** — The included sample labels demonstrate the pipeline end-to-end. A production system would require evaluation against a much larger and more diverse dataset.
 
-## What's Next
+## Future Work
 
-See `V2_ROADMAP.md` for planned improvements including expanded dataset evaluation, layout-aware field detection, and formatting verification.
+See [V2_ROADMAP.md](V2_ROADMAP.md) for planned improvements including label type classification, TF-IDF learned text span labeling, LLM fallback for low-confidence fields, human-in-the-loop review with active learning, and dataset expansion.
