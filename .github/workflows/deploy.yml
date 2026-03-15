@@ -1,0 +1,87 @@
+name: Build and Deploy to Azure App Service
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "application/**"
+      - ".github/workflows/deploy.yml"
+      - "deploy.bat"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  IMAGE_REPO: demos/treasury-assignment
+  IMAGE_TAG: latest
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate required repository variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${{ vars.AZURE_RESOURCE_GROUP }}"
+          : "${{ vars.AZURE_WEBAPP_NAME }}"
+          : "${{ vars.AZURE_ACR_NAME }}"
+
+      - name: Build and push image to ACR
+        shell: bash
+        run: |
+          set -euo pipefail
+          az acr build \
+            --registry "${{ vars.AZURE_ACR_NAME }}" \
+            --image "${IMAGE_REPO}:${IMAGE_TAG}" \
+            --file application/Dockerfile \
+            application
+
+      - name: Configure App Service to pull from ACR using managed identity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RG="${{ vars.AZURE_RESOURCE_GROUP }}"
+          APP="${{ vars.AZURE_WEBAPP_NAME }}"
+          ACR="${{ vars.AZURE_ACR_NAME }}"
+
+          ACR_LOGIN_SERVER="$(az acr show --name "$ACR" --query loginServer -o tsv)"
+          FULL_IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_REPO}:${IMAGE_TAG}"
+
+          WEBAPP_PRINCIPAL_ID="$(az webapp identity assign --resource-group "$RG" --name "$APP" --query principalId -o tsv)"
+          ACR_RESOURCE_ID="$(az acr show --name "$ACR" --query id -o tsv)"
+
+          az role assignment create \
+            --assignee-object-id "$WEBAPP_PRINCIPAL_ID" \
+            --assignee-principal-type ServicePrincipal \
+            --role AcrPull \
+            --scope "$ACR_RESOURCE_ID" || true
+
+          az webapp config container set \
+            --resource-group "$RG" \
+            --name "$APP" \
+            --container-image-name "$FULL_IMAGE" \
+            --container-registry-url "https://${ACR_LOGIN_SERVER}"
+
+          az webapp deployment container config \
+            --resource-group "$RG" \
+            --name "$APP" \
+            --enable-cd true || true
+
+          az webapp restart --resource-group "$RG" --name "$APP"
+
+          echo "Deployed image: $FULL_IMAGE"

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Dataset (images are large binaries)
+dataset/images/
+!dataset/sample_labels/
+
+# Generated outputs
+results/
+output.txt
+
+# Archives
+*.zip
+
+# OS
+.DS_Store
+Thumbs.db
+
+master*.csv
+metadata*.csv
