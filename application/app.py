@@ -41,11 +41,8 @@ def _warm_tesseract() -> None:
 
 @app.before_serving
 async def warmup_ocr_engines() -> None:
-    try:
-        await asyncio.to_thread(_warm_tesseract)
-    except Exception:
-        # Warmup should not block app startup; OCR requests can still initialize lazily.
-        log.exception("Tesseract warmup failed")
+    """Kick off warmup in background so the server is immediately live."""
+    asyncio.get_event_loop().run_in_executor(None, _warm_tesseract)
 
 
 def _translate_field(field: dict) -> dict:
@@ -67,6 +64,42 @@ def _translate_gov_warning(gov: dict, expected: bool) -> dict:
     }
 
 
+def _box_match_score(raw_value: str, box_text: str, field_name: str) -> float:
+    """Score how well a single OCR box matches a field's raw value (0.0–1.0)."""
+    if not raw_value or not box_text:
+        return 0.0
+
+    # Exact containment: raw value fully inside box text
+    if raw_value in box_text:
+        return 1.0
+
+    # For numeric fields, collapse whitespace before comparing so
+    # "750ml" matches a box reading "750 ML"
+    if field_name in ("alcohol_content", "net_contents"):
+        rv_compact = raw_value.replace(" ", "")
+        bt_compact = box_text.replace(" ", "")
+        if rv_compact in bt_compact or bt_compact in rv_compact:
+            return 0.95
+
+    # Reverse containment: box text inside raw value (e.g. box="cascade winery"
+    # inside raw="cascade winery").  Require significant coverage so a box with
+    # just one short word (e.g. "red") doesn't match.
+    if len(box_text) > 2 and box_text in raw_value:
+        coverage = len(box_text) / len(raw_value)
+        if coverage >= 0.4:
+            return coverage * 0.9
+
+    # Token overlap — require at least half the expected tokens to be present
+    raw_tokens = set(raw_value.split())
+    bt_tokens = set(box_text.split())
+    if raw_tokens and bt_tokens:
+        recall = len(raw_tokens & bt_tokens) / len(raw_tokens)
+        if recall >= 0.5:
+            return recall * 0.7
+
+    return 0.0
+
+
 def _associate_field_boxes(ocr_result: dict) -> dict:
     """Find bounding boxes from the primary OCR pass that correspond to each field."""
     all_boxes = ocr_result.get("ocr_boxes", [])
@@ -78,20 +111,24 @@ def _associate_field_boxes(ocr_result: dict) -> dict:
             continue
 
         raw_value = str(field["raw_value"]).lower().strip()
-        matched = []
+
+        scored = []
         for box in all_boxes:
-            bt = box["text"].lower()
-            if raw_value in bt or bt in raw_value:
-                matched.append(box)
+            bt = box["text"].lower().strip()
+            score = _box_match_score(raw_value, bt, field_name)
+            if score > 0:
+                scored.append((score, box))
 
-        if not matched and len(raw_value.split()) > 1:
-            raw_tokens = set(raw_value.split())
-            for box in all_boxes:
-                bt_tokens = set(box["text"].lower().split())
-                if raw_tokens & bt_tokens:
-                    matched.append(box)
+        scored.sort(key=lambda x: -x[0])
 
-        field_boxes[field_name] = matched
+        if scored:
+            best_score = scored[0][0]
+            # Only keep boxes within 60 % of the best score
+            matched = [box for s, box in scored if s >= best_score * 0.6]
+            # Cap at 2 boxes per field to keep the overlay readable
+            field_boxes[field_name] = matched[:2]
+        else:
+            field_boxes[field_name] = []
 
     gov = ocr_result.get("government_warning", {})
     if gov.get("status") != "missing":
