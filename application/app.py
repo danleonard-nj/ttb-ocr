@@ -1,9 +1,14 @@
+import os
+os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+
 import asyncio
 import logging
-import os
 import tempfile
 import time
 
+import cv2
+import numpy as np
+import pytesseract
 from quart import Quart, render_template, request, jsonify
 
 from services.ocr import OcrService
@@ -23,6 +28,24 @@ STATUS_MAP = {
     "partial": "partial_match",
     "missing": "not_found",
 }
+
+
+def _warm_tesseract() -> None:
+    t_start = time.perf_counter()
+    dummy = np.zeros((100, 100), dtype=np.uint8)
+    _ = cv2.GaussianBlur(dummy, (3, 3), 0)
+    pytesseract.image_to_string(dummy)
+    elapsed_ms = round((time.perf_counter() - t_start) * 1000)
+    log.info("Tesseract warmup complete in %dms", elapsed_ms)
+
+
+@app.before_serving
+async def warmup_ocr_engines() -> None:
+    try:
+        await asyncio.to_thread(_warm_tesseract)
+    except Exception:
+        # Warmup should not block app startup; OCR requests can still initialize lazily.
+        log.exception("Tesseract warmup failed")
 
 
 def _translate_field(field: dict) -> dict:
@@ -100,6 +123,11 @@ def _overall_confidence(result: dict) -> float:
 @app.route("/")
 async def index():
     return await render_template("index.html")
+
+
+@app.route("/healthz")
+async def healthz():
+    return {"status": "ok"}, 200
 
 
 @app.route("/api/verify", methods=["POST"])
