@@ -21,6 +21,7 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,7 +51,7 @@ jobs:
             --file application/Dockerfile \
             application
 
-      - name: Configure App Service to pull from ACR using managed identity
+      - name: Update container image and restart Web App
         shell: bash
         run: |
           set -euo pipefail
@@ -62,26 +63,14 @@ jobs:
           ACR_LOGIN_SERVER="$(az acr show --name "$ACR" --query loginServer -o tsv)"
           FULL_IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_REPO}:${IMAGE_TAG}"
 
-          WEBAPP_PRINCIPAL_ID="$(az webapp identity assign --resource-group "$RG" --name "$APP" --query principalId -o tsv)"
-          ACR_RESOURCE_ID="$(az acr show --name "$ACR" --query id -o tsv)"
-
-          az role assignment create \
-            --assignee-object-id "$WEBAPP_PRINCIPAL_ID" \
-            --assignee-principal-type ServicePrincipal \
-            --role AcrPull \
-            --scope "$ACR_RESOURCE_ID" || true
-
           az webapp config container set \
             --resource-group "$RG" \
             --name "$APP" \
             --container-image-name "$FULL_IMAGE" \
             --container-registry-url "https://${ACR_LOGIN_SERVER}"
 
-          az webapp deployment container config \
+          az webapp restart \
             --resource-group "$RG" \
-            --name "$APP" \
-            --enable-cd true || true
-
-          az webapp restart --resource-group "$RG" --name "$APP"
+            --name "$APP"
 
           echo "Deployed image: $FULL_IMAGE"
